@@ -18,20 +18,25 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-const navigation = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Orders", href: "/orders", icon: ShoppingCart },
-  { name: "Menu", href: "/menu", icon: Utensils },
-  { name: "Tables", href: "/tables", icon: TableIcon },
-  { name: "Staff", href: "/staff", icon: Users },
-];
-
 interface MobileSidebarProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  restaurantId: string;
 }
 
-export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
+const navigation = [
+  { name: "Dashboard", path: "", icon: LayoutDashboard },
+  { name: "Orders", path: "orders", icon: ShoppingCart },
+  { name: "Menu", path: "menu", icon: Utensils },
+  { name: "Tables", path: "tables", icon: TableIcon },
+  { name: "Staff", path: "staff", icon: Users },
+];
+
+export function MobileSidebar({
+  open,
+  onOpenChange,
+  restaurantId,
+}: MobileSidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -43,11 +48,12 @@ export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
         <nav className="flex-1 space-y-1 p-4">
           {navigation.map((item) => {
             const Icon = item.icon;
-            const isActive = pathname === item.href;
+            const href = `/r/${restaurantId}${item.path ? `/${item.path}` : ""}`;
+            const isActive = pathname === href;
             return (
               <Link
                 key={item.name}
-                href={item.href}
+                href={href}
                 onClick={() => onOpenChange(false)}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
