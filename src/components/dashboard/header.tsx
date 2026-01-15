@@ -1,7 +1,8 @@
 "use client";
 
+import { useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Menu, User, Store, ChevronDown, Check } from "lucide-react";
+import { Menu, User, Store, ChevronDown, Check, LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { logout } from "@/app/actions/auth";
 
 interface Restaurant {
   id: string;
@@ -30,12 +32,13 @@ export function Header({
 }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   const handleRestaurantChange = (restaurantId: string) => {
     // Extract the current sub-route (e.g., menu, orders, etc.)
     // Path format: /r/[restaurantId] or /r/[restaurantId]/[subRoute]
     const pathParts = pathname.split("/").filter(Boolean);
-    
+
     // Path should be: ['r', restaurantId, subRoute?]
     if (pathParts.length >= 3 && pathParts[0] === "r") {
       const subRoute = pathParts[2]; // menu, orders, etc.
@@ -98,7 +101,18 @@ export function Header({
             <DropdownMenuItem>Profile</DropdownMenuItem>
             <DropdownMenuItem>Settings</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Log out</DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                startTransition(() => {
+                  logout();
+                });
+              }}
+              disabled={isPending}
+              className="flex items-center gap-2"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>Log out</span>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
