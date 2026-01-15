@@ -115,7 +115,7 @@ export function CategoryDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="select-none [&_input]:select-text [&_textarea]:select-text">
           <DialogHeader>
             <DialogTitle>
               {category ? "Edit Category" : "Add Category"}
@@ -129,7 +129,7 @@ export function CategoryDialog({
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label htmlFor="name" className="text-sm font-medium">
+              <label htmlFor="name" className="text-sm font-medium select-none">
                 Name <span className="text-destructive">*</span>
               </label>
               <Input
@@ -139,11 +139,12 @@ export function CategoryDialog({
                 placeholder="e.g., Appetizers, Main Course"
                 required
                 disabled={loading}
+                className="select-text"
               />
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="description" className="text-sm font-medium">
+              <label htmlFor="description" className="text-sm font-medium select-none">
                 Description
               </label>
               <Input
@@ -152,6 +153,7 @@ export function CategoryDialog({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Optional description"
                 disabled={loading}
+                className="select-text"
               />
             </div>
           </div>

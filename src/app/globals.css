@@ -29,3 +29,36 @@ body {
   color: hsl(var(--foreground));
   font-family: var(--font-sans), system-ui, sans-serif;
 }
+
+/* Prevent unwanted text selection in dialogs */
+[role="dialog"],
+[data-radix-dialog-content] {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+/* Allow text selection in inputs and textareas within dialogs */
+[role="dialog"] input,
+[role="dialog"] textarea,
+[data-radix-dialog-content] input,
+[data-radix-dialog-content] textarea {
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+/* Prevent text selection on labels, buttons, and non-interactive elements in dialogs */
+[role="dialog"] label,
+[role="dialog"] button,
+[role="dialog"] [role="button"],
+[data-radix-dialog-content] label,
+[data-radix-dialog-content] button,
+[data-radix-dialog-content] [role="button"] {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
