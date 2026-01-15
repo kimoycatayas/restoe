@@ -18,10 +18,9 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Core restaurant entity. Each restaurant is a tenant in the system.
 -- ============================================================================
 
-CREATE TABLE restaurants (
+CREATE TABLE IF NOT EXISTS restaurants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
-    slug TEXT UNIQUE NOT NULL,
     address TEXT,
     phone TEXT,
     email TEXT,
@@ -31,13 +30,15 @@ CREATE TABLE restaurants (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create index for slug lookups
-CREATE INDEX idx_restaurants_slug ON restaurants(slug);
+-- Drop slug column if it exists (migration for existing databases)
+ALTER TABLE restaurants DROP COLUMN IF EXISTS slug;
+DROP INDEX IF EXISTS idx_restaurants_slug;
 
 -- Enable RLS
 ALTER TABLE restaurants ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Users can view restaurants they are members of
+DROP POLICY IF EXISTS "restaurants_select_members" ON restaurants;
 CREATE POLICY "restaurants_select_members"
     ON restaurants
     FOR SELECT
@@ -50,6 +51,7 @@ CREATE POLICY "restaurants_select_members"
     );
 
 -- Policy: Only owners can update restaurant settings
+DROP POLICY IF EXISTS "restaurants_update_owners" ON restaurants;
 CREATE POLICY "restaurants_update_owners"
     ON restaurants
     FOR UPDATE
@@ -63,6 +65,7 @@ CREATE POLICY "restaurants_update_owners"
     );
 
 -- Policy: Any authenticated user can insert new restaurants (for bootstrap)
+DROP POLICY IF EXISTS "restaurants_insert_authenticated" ON restaurants;
 CREATE POLICY "restaurants_insert_authenticated"
     ON restaurants
     FOR INSERT
@@ -75,7 +78,7 @@ CREATE POLICY "restaurants_insert_authenticated"
 -- Roles: 'owner', 'member', 'staff'
 -- ============================================================================
 
-CREATE TABLE restaurant_users (
+CREATE TABLE IF NOT EXISTS restaurant_users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -86,20 +89,24 @@ CREATE TABLE restaurant_users (
 );
 
 -- Create indexes for common queries
-CREATE INDEX idx_restaurant_users_restaurant_id ON restaurant_users(restaurant_id);
-CREATE INDEX idx_restaurant_users_user_id ON restaurant_users(user_id);
-CREATE INDEX idx_restaurant_users_role ON restaurant_users(role);
+CREATE INDEX IF NOT EXISTS idx_restaurant_users_restaurant_id ON restaurant_users(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_users_user_id ON restaurant_users(user_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_users_role ON restaurant_users(role);
 
 -- Enable RLS
 ALTER TABLE restaurant_users ENABLE ROW LEVEL SECURITY;
 
--- Policy: Users can view their own restaurant memberships
+-- Policy: Users can view their own memberships
+-- This allows users to check if they have any restaurant memberships
+DROP POLICY IF EXISTS "restaurant_users_select_own" ON restaurant_users;
 CREATE POLICY "restaurant_users_select_own"
     ON restaurant_users
     FOR SELECT
     USING (user_id = auth.uid());
 
 -- Policy: Users can view members of restaurants they belong to
+-- This allows viewing other members once you have a membership
+DROP POLICY IF EXISTS "restaurant_users_select_restaurant_members" ON restaurant_users;
 CREATE POLICY "restaurant_users_select_restaurant_members"
     ON restaurant_users
     FOR SELECT
@@ -111,32 +118,51 @@ CREATE POLICY "restaurant_users_select_restaurant_members"
         )
     );
 
--- Policy: Allow first owner bootstrap or owner invites
-CREATE POLICY "restaurant_users_insert_first_owner_or_owner_invite"
+-- Helper function to check ownership without RLS recursion
+-- Uses SECURITY DEFINER to bypass RLS when checking ownership
+CREATE OR REPLACE FUNCTION is_restaurant_owner(check_restaurant_id UUID, check_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1
+        FROM restaurant_users
+        WHERE restaurant_id = check_restaurant_id
+        AND user_id = check_user_id
+        AND role = 'owner'
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Policy: Allow restaurant_users inserts
+-- Split into two policies to avoid recursion:
+-- 1. Bootstrap: Any authenticated user can add themselves as owner (for restaurant creation)
+-- 2. Owner invites: Owners can add other users to their restaurants
+DROP POLICY IF EXISTS "restaurant_users_insert_bootstrap" ON restaurant_users;
+CREATE POLICY "restaurant_users_insert_bootstrap"
     ON restaurant_users
     FOR INSERT
     WITH CHECK (
-        (
-            user_id = auth.uid()
-            AND role = 'owner'
-            AND NOT EXISTS (
-                SELECT 1
-                FROM restaurant_users ru
-                WHERE ru.restaurant_id = restaurant_users.restaurant_id
-            )
-        )
-        OR
-        (
-            restaurant_id IN (
-                SELECT restaurant_id
-                FROM restaurant_users
-                WHERE user_id = auth.uid()
-                    AND role = 'owner'
-            )
-        )
+        -- Allow authenticated users to add themselves as owner
+        -- This enables the restaurant creation workflow
+        user_id = auth.uid()
+        AND role = 'owner'
+        AND auth.uid() IS NOT NULL
+    );
+
+-- Policy: Allow owners to invite other users
+DROP POLICY IF EXISTS "restaurant_users_insert_owner_invite" ON restaurant_users;
+CREATE POLICY "restaurant_users_insert_owner_invite"
+    ON restaurant_users
+    FOR INSERT
+    WITH CHECK (
+        -- Owners can invite other users (not themselves, as that's handled by bootstrap policy)
+        -- Use the SECURITY DEFINER function to avoid RLS recursion
+        user_id != auth.uid()
+        AND is_restaurant_owner(restaurant_id, auth.uid())
     );
 
 -- Policy: Only owners can update restaurant user roles
+DROP POLICY IF EXISTS "restaurant_users_update_owners" ON restaurant_users;
 CREATE POLICY "restaurant_users_update_owners"
     ON restaurant_users
     FOR UPDATE
@@ -147,9 +173,19 @@ CREATE POLICY "restaurant_users_update_owners"
             WHERE user_id = auth.uid()
                 AND role = 'owner'
         )
+    )
+    WITH CHECK (
+        -- Ensure the restaurant_id cannot be changed
+        restaurant_id IN (
+            SELECT restaurant_id
+            FROM restaurant_users
+            WHERE user_id = auth.uid()
+                AND role = 'owner'
+        )
     );
 
 -- Policy: Only owners can delete restaurant users
+DROP POLICY IF EXISTS "restaurant_users_delete_owners" ON restaurant_users;
 CREATE POLICY "restaurant_users_delete_owners"
     ON restaurant_users
     FOR DELETE
@@ -168,7 +204,7 @@ CREATE POLICY "restaurant_users_delete_owners"
 -- Categories for organizing menu items (e.g., "Appetizers", "Main Courses")
 -- ============================================================================
 
-CREATE TABLE menu_categories (
+CREATE TABLE IF NOT EXISTS menu_categories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -180,13 +216,14 @@ CREATE TABLE menu_categories (
 );
 
 -- Create indexes
-CREATE INDEX idx_menu_categories_restaurant_id ON menu_categories(restaurant_id);
-CREATE INDEX idx_menu_categories_display_order ON menu_categories(restaurant_id, display_order);
+CREATE INDEX IF NOT EXISTS idx_menu_categories_restaurant_id ON menu_categories(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_menu_categories_display_order ON menu_categories(restaurant_id, display_order);
 
 -- Enable RLS
 ALTER TABLE menu_categories ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Members can view categories of their restaurants
+DROP POLICY IF EXISTS "menu_categories_select_members" ON menu_categories;
 CREATE POLICY "menu_categories_select_members"
     ON menu_categories
     FOR SELECT
@@ -199,6 +236,7 @@ CREATE POLICY "menu_categories_select_members"
     );
 
 -- Policy: Members can insert categories
+DROP POLICY IF EXISTS "menu_categories_insert_members" ON menu_categories;
 CREATE POLICY "menu_categories_insert_members"
     ON menu_categories
     FOR INSERT
@@ -211,6 +249,7 @@ CREATE POLICY "menu_categories_insert_members"
     );
 
 -- Policy: Members can update categories
+DROP POLICY IF EXISTS "menu_categories_update_members" ON menu_categories;
 CREATE POLICY "menu_categories_update_members"
     ON menu_categories
     FOR UPDATE
@@ -220,9 +259,18 @@ CREATE POLICY "menu_categories_update_members"
             FROM restaurant_users
             WHERE user_id = auth.uid()
         )
+    )
+    WITH CHECK (
+        -- Ensure restaurant_id cannot be changed
+        restaurant_id IN (
+            SELECT restaurant_id
+            FROM restaurant_users
+            WHERE user_id = auth.uid()
+        )
     );
 
 -- Policy: Members can delete categories
+DROP POLICY IF EXISTS "menu_categories_delete_members" ON menu_categories;
 CREATE POLICY "menu_categories_delete_members"
     ON menu_categories
     FOR DELETE
@@ -240,7 +288,7 @@ CREATE POLICY "menu_categories_delete_members"
 -- Individual menu items (dishes, drinks, etc.) belonging to categories
 -- ============================================================================
 
-CREATE TABLE menu_items (
+CREATE TABLE IF NOT EXISTS menu_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
     category_id UUID REFERENCES menu_categories(id) ON DELETE SET NULL,
@@ -255,14 +303,15 @@ CREATE TABLE menu_items (
 );
 
 -- Create indexes
-CREATE INDEX idx_menu_items_restaurant_id ON menu_items(restaurant_id);
-CREATE INDEX idx_menu_items_category_id ON menu_items(category_id);
-CREATE INDEX idx_menu_items_display_order ON menu_items(restaurant_id, display_order);
+CREATE INDEX IF NOT EXISTS idx_menu_items_restaurant_id ON menu_items(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_menu_items_category_id ON menu_items(category_id);
+CREATE INDEX IF NOT EXISTS idx_menu_items_display_order ON menu_items(restaurant_id, display_order);
 
 -- Enable RLS
 ALTER TABLE menu_items ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Members can view menu items of their restaurants
+DROP POLICY IF EXISTS "menu_items_select_members" ON menu_items;
 CREATE POLICY "menu_items_select_members"
     ON menu_items
     FOR SELECT
@@ -275,6 +324,7 @@ CREATE POLICY "menu_items_select_members"
     );
 
 -- Policy: Members can insert menu items
+DROP POLICY IF EXISTS "menu_items_insert_members" ON menu_items;
 CREATE POLICY "menu_items_insert_members"
     ON menu_items
     FOR INSERT
@@ -287,6 +337,7 @@ CREATE POLICY "menu_items_insert_members"
     );
 
 -- Policy: Members can update menu items
+DROP POLICY IF EXISTS "menu_items_update_members" ON menu_items;
 CREATE POLICY "menu_items_update_members"
     ON menu_items
     FOR UPDATE
@@ -296,9 +347,18 @@ CREATE POLICY "menu_items_update_members"
             FROM restaurant_users
             WHERE user_id = auth.uid()
         )
+    )
+    WITH CHECK (
+        -- Ensure restaurant_id cannot be changed
+        restaurant_id IN (
+            SELECT restaurant_id
+            FROM restaurant_users
+            WHERE user_id = auth.uid()
+        )
     );
 
 -- Policy: Members can delete menu items
+DROP POLICY IF EXISTS "menu_items_delete_members" ON menu_items;
 CREATE POLICY "menu_items_delete_members"
     ON menu_items
     FOR DELETE
@@ -316,7 +376,7 @@ CREATE POLICY "menu_items_delete_members"
 -- Physical tables in the restaurant (e.g., "Table 1", "Table 2", "VIP Booth")
 -- ============================================================================
 
-CREATE TABLE tables (
+CREATE TABLE IF NOT EXISTS tables (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -328,13 +388,14 @@ CREATE TABLE tables (
 );
 
 -- Create indexes
-CREATE INDEX idx_tables_restaurant_id ON tables(restaurant_id);
-CREATE INDEX idx_tables_status ON tables(restaurant_id, status);
+CREATE INDEX IF NOT EXISTS idx_tables_restaurant_id ON tables(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_tables_status ON tables(restaurant_id, status);
 
 -- Enable RLS
 ALTER TABLE tables ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Members can view tables of their restaurants
+DROP POLICY IF EXISTS "tables_select_members" ON tables;
 CREATE POLICY "tables_select_members"
     ON tables
     FOR SELECT
@@ -347,6 +408,7 @@ CREATE POLICY "tables_select_members"
     );
 
 -- Policy: Members can insert tables
+DROP POLICY IF EXISTS "tables_insert_members" ON tables;
 CREATE POLICY "tables_insert_members"
     ON tables
     FOR INSERT
@@ -359,6 +421,7 @@ CREATE POLICY "tables_insert_members"
     );
 
 -- Policy: Members can update tables
+DROP POLICY IF EXISTS "tables_update_members" ON tables;
 CREATE POLICY "tables_update_members"
     ON tables
     FOR UPDATE
@@ -368,9 +431,18 @@ CREATE POLICY "tables_update_members"
             FROM restaurant_users
             WHERE user_id = auth.uid()
         )
+    )
+    WITH CHECK (
+        -- Ensure restaurant_id cannot be changed
+        restaurant_id IN (
+            SELECT restaurant_id
+            FROM restaurant_users
+            WHERE user_id = auth.uid()
+        )
     );
 
 -- Policy: Members can delete tables
+DROP POLICY IF EXISTS "tables_delete_members" ON tables;
 CREATE POLICY "tables_delete_members"
     ON tables
     FOR DELETE
@@ -388,7 +460,7 @@ CREATE POLICY "tables_delete_members"
 -- Customer orders linked to tables and restaurants
 -- ============================================================================
 
-CREATE TABLE orders (
+CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
     table_id UUID REFERENCES tables(id) ON DELETE SET NULL,
@@ -401,15 +473,16 @@ CREATE TABLE orders (
 );
 
 -- Create indexes
-CREATE INDEX idx_orders_restaurant_id ON orders(restaurant_id);
-CREATE INDEX idx_orders_table_id ON orders(table_id);
-CREATE INDEX idx_orders_status ON orders(restaurant_id, status);
-CREATE INDEX idx_orders_created_at ON orders(restaurant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_restaurant_id ON orders(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_orders_table_id ON orders(table_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(restaurant_id, status);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(restaurant_id, created_at DESC);
 
 -- Enable RLS
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Members can view orders of their restaurants
+DROP POLICY IF EXISTS "orders_select_members" ON orders;
 CREATE POLICY "orders_select_members"
     ON orders
     FOR SELECT
@@ -422,6 +495,7 @@ CREATE POLICY "orders_select_members"
     );
 
 -- Policy: Members can insert orders
+DROP POLICY IF EXISTS "orders_insert_members" ON orders;
 CREATE POLICY "orders_insert_members"
     ON orders
     FOR INSERT
@@ -434,6 +508,7 @@ CREATE POLICY "orders_insert_members"
     );
 
 -- Policy: Members can update orders
+DROP POLICY IF EXISTS "orders_update_members" ON orders;
 CREATE POLICY "orders_update_members"
     ON orders
     FOR UPDATE
@@ -443,9 +518,18 @@ CREATE POLICY "orders_update_members"
             FROM restaurant_users
             WHERE user_id = auth.uid()
         )
+    )
+    WITH CHECK (
+        -- Ensure restaurant_id cannot be changed
+        restaurant_id IN (
+            SELECT restaurant_id
+            FROM restaurant_users
+            WHERE user_id = auth.uid()
+        )
     );
 
 -- Policy: Members can delete orders
+DROP POLICY IF EXISTS "orders_delete_members" ON orders;
 CREATE POLICY "orders_delete_members"
     ON orders
     FOR DELETE
@@ -463,7 +547,7 @@ CREATE POLICY "orders_delete_members"
 -- Individual items within an order. Scoped via orders table.
 -- ============================================================================
 
-CREATE TABLE order_items (
+CREATE TABLE IF NOT EXISTS order_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     menu_item_id UUID REFERENCES menu_items(id) ON DELETE SET NULL,
@@ -476,13 +560,14 @@ CREATE TABLE order_items (
 );
 
 -- Create indexes
-CREATE INDEX idx_order_items_order_id ON order_items(order_id);
-CREATE INDEX idx_order_items_menu_item_id ON order_items(menu_item_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_menu_item_id ON order_items(menu_item_id);
 
 -- Enable RLS
 ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Members can view order items via orders they can access
+DROP POLICY IF EXISTS "order_items_select_members" ON order_items;
 CREATE POLICY "order_items_select_members"
     ON order_items
     FOR SELECT
@@ -499,6 +584,7 @@ CREATE POLICY "order_items_select_members"
     );
 
 -- Policy: Members can insert order items via orders they can access
+DROP POLICY IF EXISTS "order_items_insert_members" ON order_items;
 CREATE POLICY "order_items_insert_members"
     ON order_items
     FOR INSERT
@@ -515,6 +601,7 @@ CREATE POLICY "order_items_insert_members"
     );
 
 -- Policy: Members can update order items via orders they can access
+DROP POLICY IF EXISTS "order_items_update_members" ON order_items;
 CREATE POLICY "order_items_update_members"
     ON order_items
     FOR UPDATE
@@ -528,9 +615,22 @@ CREATE POLICY "order_items_update_members"
                 WHERE user_id = auth.uid()
             )
         )
+    )
+    WITH CHECK (
+        -- Ensure order_id cannot be changed to an order from another restaurant
+        order_id IN (
+            SELECT id
+            FROM orders
+            WHERE restaurant_id IN (
+                SELECT restaurant_id
+                FROM restaurant_users
+                WHERE user_id = auth.uid()
+            )
+        )
     );
 
 -- Policy: Members can delete order items via orders they can access
+DROP POLICY IF EXISTS "order_items_delete_members" ON order_items;
 CREATE POLICY "order_items_delete_members"
     ON order_items
     FOR DELETE
@@ -560,36 +660,43 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_restaurants_updated_at ON restaurants;
 CREATE TRIGGER update_restaurants_updated_at
     BEFORE UPDATE ON restaurants
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_restaurant_users_updated_at ON restaurant_users;
 CREATE TRIGGER update_restaurant_users_updated_at
     BEFORE UPDATE ON restaurant_users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_menu_categories_updated_at ON menu_categories;
 CREATE TRIGGER update_menu_categories_updated_at
     BEFORE UPDATE ON menu_categories
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_menu_items_updated_at ON menu_items;
 CREATE TRIGGER update_menu_items_updated_at
     BEFORE UPDATE ON menu_items
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_tables_updated_at ON tables;
 CREATE TRIGGER update_tables_updated_at
     BEFORE UPDATE ON tables
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_orders_updated_at ON orders;
 CREATE TRIGGER update_orders_updated_at
     BEFORE UPDATE ON orders
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_order_items_updated_at ON order_items;
 CREATE TRIGGER update_order_items_updated_at
     BEFORE UPDATE ON order_items
     FOR EACH ROW

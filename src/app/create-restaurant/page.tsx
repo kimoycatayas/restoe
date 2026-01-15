@@ -16,21 +16,18 @@ export default async function CreateRestaurantPage() {
     redirect("/login");
   }
 
-  const { data: existingMembership, error } = await supabase
+  // Check if user already has any restaurant memberships
+  const { data: memberships, error } = await supabase
     .from("restaurant_users")
-    .select("id")
+    .select("restaurant_id")
     .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
 
-  if (error) {
-    // If we can't determine membership, fail closed and send them to dashboard.
-    // Adjust this behavior if you prefer to keep them on this page instead.
-    redirect("/");
-  }
-
-  if (existingMembership) {
-    redirect("/"); // TODO: Update to your dashboard route if different.
+  // If error, we'll allow them to stay on the page and try creating
+  // The INSERT policy will handle authorization checks
+  // If they have existing memberships, redirect to their first restaurant
+  if (!error && memberships && memberships.length > 0) {
+    redirect(`/r/${memberships[0].restaurant_id}`);
   }
 
   return (

@@ -15,12 +15,13 @@ export default async function HomePage() {
   }
 
   // Fetch all restaurant_ids from restaurant_users for this user
-  const { data: memberships } = await supabase
+  const { data: memberships, error } = await supabase
     .from("restaurant_users")
     .select("restaurant_id")
     .eq("user_id", user.id);
 
-  if (!memberships || memberships.length === 0) {
+  // If error or no memberships, redirect to create restaurant
+  if (error || !memberships || memberships.length === 0) {
     redirect("/create-restaurant");
   }
 
