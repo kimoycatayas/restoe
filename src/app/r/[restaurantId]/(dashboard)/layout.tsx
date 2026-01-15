@@ -75,10 +75,21 @@ export default async function DashboardGroupLayout({
 
   const restaurantList = restaurants || [];
 
+  // Get current user's role for this restaurant
+  const { data: userRole } = await supabase
+    .from("restaurant_users")
+    .select("role")
+    .eq("restaurant_id", restaurantId)
+    .eq("user_id", user.id)
+    .single();
+
+  const currentUserRole = (userRole?.role as "owner" | "staff" | "member") || null;
+
   return (
     <DashboardLayout
       currentRestaurant={currentRestaurant}
       restaurants={restaurantList}
+      userRole={currentUserRole}
     >
       {children}
     </DashboardLayout>

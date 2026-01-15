@@ -162,40 +162,27 @@ CREATE POLICY "restaurant_users_insert_owner_invite"
     );
 
 -- Policy: Only owners can update restaurant user roles
+-- Use the SECURITY DEFINER function to avoid RLS recursion
 DROP POLICY IF EXISTS "restaurant_users_update_owners" ON restaurant_users;
 CREATE POLICY "restaurant_users_update_owners"
     ON restaurant_users
     FOR UPDATE
     USING (
-        restaurant_id IN (
-            SELECT restaurant_id
-            FROM restaurant_users
-            WHERE user_id = auth.uid()
-                AND role = 'owner'
-        )
+        is_restaurant_owner(restaurant_id, auth.uid())
     )
     WITH CHECK (
         -- Ensure the restaurant_id cannot be changed
-        restaurant_id IN (
-            SELECT restaurant_id
-            FROM restaurant_users
-            WHERE user_id = auth.uid()
-                AND role = 'owner'
-        )
+        is_restaurant_owner(restaurant_id, auth.uid())
     );
 
 -- Policy: Only owners can delete restaurant users
+-- Use the SECURITY DEFINER function to avoid RLS recursion
 DROP POLICY IF EXISTS "restaurant_users_delete_owners" ON restaurant_users;
 CREATE POLICY "restaurant_users_delete_owners"
     ON restaurant_users
     FOR DELETE
     USING (
-        restaurant_id IN (
-            SELECT restaurant_id
-            FROM restaurant_users
-            WHERE user_id = auth.uid()
-                AND role = 'owner'
-        )
+        is_restaurant_owner(restaurant_id, auth.uid())
     );
 
 -- ============================================================================

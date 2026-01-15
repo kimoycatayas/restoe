@@ -14,12 +14,14 @@ interface DashboardLayoutProps {
   children: React.ReactNode;
   currentRestaurant: Restaurant;
   restaurants: Restaurant[];
+  userRole: "owner" | "staff" | "member" | null;
 }
 
 export function DashboardLayout({
   children,
   currentRestaurant,
   restaurants,
+  userRole,
 }: DashboardLayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -32,12 +34,13 @@ export function DashboardLayout({
       />
       <div className="flex flex-1 overflow-hidden">
         <aside className="hidden md:block">
-          <Sidebar restaurantId={currentRestaurant.id} />
+          <Sidebar restaurantId={currentRestaurant.id} userRole={userRole} />
         </aside>
         <MobileSidebar
           open={mobileMenuOpen}
           onOpenChange={setMobileMenuOpen}
           restaurantId={currentRestaurant.id}
+          userRole={userRole}
         />
         <main className="flex-1 overflow-y-auto bg-background">
           {children}

@@ -8,6 +8,7 @@ import {
   Utensils,
   Table as TableIcon,
   Users,
+  ChefHat,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,22 +23,37 @@ interface MobileSidebarProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   restaurantId: string;
+  userRole: "owner" | "staff" | "member" | null;
 }
 
-const navigation = [
+type NavigationItem = {
+  name: string;
+  path: string;
+  icon: React.ComponentType<{ className?: string }>;
+  ownerOnly?: boolean;
+};
+
+const navigation: NavigationItem[] = [
   { name: "Dashboard", path: "", icon: LayoutDashboard },
   { name: "Orders", path: "orders", icon: ShoppingCart },
+  { name: "Kitchen", path: "kitchen", icon: ChefHat },
   { name: "Menu", path: "menu", icon: Utensils },
   { name: "Tables", path: "tables", icon: TableIcon },
-  { name: "Staff", path: "staff", icon: Users },
+  { name: "Staff", path: "staff", icon: Users, ownerOnly: true },
 ];
 
 export function MobileSidebar({
   open,
   onOpenChange,
   restaurantId,
+  userRole,
 }: MobileSidebarProps) {
   const pathname = usePathname();
+
+  // Filter navigation based on user role
+  const filteredNavigation = navigation.filter(
+    (item) => !item.ownerOnly || userRole === "owner"
+  );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -46,7 +62,7 @@ export function MobileSidebar({
           <SheetTitle className="text-xl font-semibold">Restoe</SheetTitle>
         </SheetHeader>
         <nav className="flex-1 space-y-1 p-4">
-          {navigation.map((item) => {
+          {filteredNavigation.map((item) => {
             const Icon = item.icon;
             const href = `/r/${restaurantId}${item.path ? `/${item.path}` : ""}`;
             const isActive = pathname === href;
